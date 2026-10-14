@@ -1,0 +1,240 @@
+---
+title: "Predicting NFL Team Success"
+format: gfm
+---
+
+# loaded in data with pandas, The data set contains any metric I thought might be relevant for predicting NFL wins and losses.
+
+```{python}
+import numpy as np
+import pandas as pd
+import statsmodels.api as sm
+
+df = pd.read_csv("~/Downloads/nfl_team_season_stats_2015_2025.csv")
+```
+
+#view the data
+
+```{python}
+df.head()
+```
+
+```{python}
+df.columns
+```
+
+#decided to drop everything that highly correlates wiith wins so the when I do my correlation matrix the obvious metrics don't show up
+
+```{python}
+df_clean = df.drop(columns=['season', 'team', 'games', 'losses', 'ties', 'win_pct'])
+```
+
+#review the cleaned data
+
+```{python}
+df_clean.head()
+```
+
+#used .corr() to find the correlation of each numeric feature's correlation to wins
+
+```{python}
+correlations = df_clean.corr(numeric_only=True)['wins'].sort_values(ascending=False)
+```
+
+# stats correlated with winning
+
+```{python}
+print(correlations.head(10))
+```
+
+# stats correlated with losing
+
+```{python}
+print(correlations.tail(10))
+```
+
+#import new libraries in order to run ridge model
+
+#dropped more columns that were too obvious and completely skewed the model I also tried out a random forrest model that I deleted,but I prefered the ridge model due to the random forrest model having higher dependance on one to two variables
+
+```{python}
+X = df_clean.drop(columns=['wins', 'point_diff_per_game','epa_per_play_differential'])
+Y = df_clean['wins']
+```
+
+# import more libraries for scaling and ridge regression
+
+```{python}
+from sklearn.linear_model import Ridge
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import mean_absolute_error, r2_score
+```
+
+#Scaled the features before fitting the ridge regression model.
+
+```{python}
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+```
+
+#run the ridge regression model
+
+```{python}
+ridge_model = Ridge(alpha=10.0)
+ridge_model.fit(X_scaled, Y)
+```
+
+#view the coefficients of the ridge regression model
+
+```{python}
+coefficients = pd.Series(ridge_model.coef_, index=X.columns).sort_values(ascending=False)
+```
+
+#print the top positive and negative drivers of wins
+
+```{python}
+print("--- Top 5 Positive Drivers of Wins ---")
+print(coefficients.head(5).round(3))
+print("\n--- Top 5 Negative Drivers of Wins ---")
+print(coefficients.tail(5).round(3))
+```
+
+## Model Evaluation & Performance Metrics
+
+evaluate model predictive accuracy across the dataset using Mean Absolute Error (MAE) and r squared
+
+```{python}
+predictions = ridge_model.predict(X_scaled)
+
+mae = mean_absolute_error(Y, predictions)
+r2 = r2_score(Y, predictions)
+
+print(f"Mean Absolute Error (MAE): {mae:.2f} wins")
+print(f"Coefficient of Determination (R²): {r2:.3f}")
+```
+
+## Visualizing Key Statistical Drivers
+
+Next I visualized the top positive and negative drivers of season win totals.
+
+```{python}
+import matplotlib.pyplot as plt
+import seaborn as sns
+top_features = pd.concat([coefficients.head(5), coefficients.tail(5)])
+
+plt.figure(figsize=(10, 5))
+colors = ['navy' if x > 0 else 'firebrick' for x in top_features.values]
+top_features.plot(kind='barh', color=colors)
+plt.title('Top Positive and Negative Drivers of NFL Win Totals (Ridge Regression)')
+plt.xlabel('Standardized Coefficient Weight')
+plt.axvline(0, color='black', linewidth=0.8, linestyle='--')
+plt.tight_layout()
+plt.show()
+```
+
+## Evaluating Predicted vs. Actual Wins
+
+Comparing predicted win totals against actual season outcomes highlights teams that over- or under-performed relative to their stat line.
+
+```{python}
+results = df[['season', 'team', 'wins']].copy()
+results['predicted_wins'] = predictions.round(1)
+results['residual'] = (results['wins'] - results['predicted_wins']).round(1)
+print("--- Sample Predictions vs. Actual Wins ---")
+print(results.head(10))
+plt.figure(figsize=(7, 6))
+plt.scatter(results['predicted_wins'], results['wins'], alpha=0.6, color='darkblue')
+plt.plot([0, 17], [0, 17], color='red', linestyle='--', label='Perfect Prediction Line')
+plt.title('Actual Wins vs. Predicted Wins')
+plt.xlabel('Predicted Wins')
+plt.ylabel('Actual Wins')
+plt.legend()
+plt.grid(True, linestyle=':', alpha=0.6)
+plt.show()
+```
+
+# download new file I manually ade with just a few teams, I couldn't get all the stats for the 2026 season
+
+```{python}
+import pandas as pd
+df_2026 = pd.read_csv("2026_NFL_data.csv")
+```
+
+# Read and clean the 2026 NFL data file
+
+# I couldn't figure out how to clean the data to properly run it in the model so I got some help writing this for loop to clean the raw CSV lines before loading them into a DataFrame to be able to finish the last part of my project
+
+```{python}
+import pandas as pd
+import io
+import os
+file_path = os.path.expanduser("2026_NFL_data.csv")
+with open(file_path, "r", encoding="utf-8-sig") as f:
+    raw_lines = f.readlines()
+clean_lines = []
+for line in raw_lines:
+    line_str = line.strip()
+    # Skip empty lines
+    if not line_str or line_str.replace(',', '').strip() == '':
+        continue
+    if line_str.startswith('"'):
+        line_str = line_str.split('",,,')[0].lstrip('"').rstrip('",')
+    clean_lines.append(line_str)
+```
+
+# 2. Load cleaned lines into Pandas DataFrame
+
+```{python}
+df2 = pd.read_csv(io.StringIO("\n".join(clean_lines)))
+```
+
+# 3. Align features with historical training matrix X
+
+```{python}
+X_2026 = df2[X.columns]
+```
+
+# 4. Scale using the fitted historical scaler
+
+```{python}
+X_2026_scaled = scaler.transform(X_2026)
+```
+
+# 5. Predict total wins and calculate remaining wins
+
+```{python}
+df2['projected_total_wins'] = ridge_model.predict(X_2026_scaled).round(1)
+df2['projected_remaining_wins'] = (df2['projected_total_wins'] - df2['wins']).round(1)
+```
+
+# 6. Display formatted standings
+
+```{python}
+projections = df2[['team', 'wins', 'losses', 'points_per_game', 'points_allowed_per_game', 'projected_total_wins', 'projected_remaining_wins']]\
+    .sort_values(by='projected_total_wins', ascending=False)\
+    .reset_index(drop=True)
+
+projections
+```
+
+# visualize the totals for each of the modeled teams
+
+```{python}
+import matplotlib.pyplot as plt
+
+plt.figure(figsize=(7, 4))
+bars = plt.bar(
+    projections['team'], 
+    projections['projected_total_wins'], 
+    width=0.5
+)
+
+plt.title('2026 Projected Total Wins', fontsize=12, fontweight='bold', pad=10)
+plt.ylabel('Projected Wins')
+plt.ylim(0, 16)
+plt.gca().spines['top'].set_visible(False)
+plt.gca().spines['right'].set_visible(False)
+
+plt.tight_layout()
+plt.show()
+```
